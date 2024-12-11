@@ -1,7 +1,25 @@
+local sharedConfig = require 'config.shared'
 local interiorShell
-local decorationObjects = {}
+DecorationObjects = {}
+local properties = {}
 local insideProperty = false
+local isPropertyRental = false
 local interactions
+local isConcealing = false
+local concealWhitelist = {}
+local blips = {}
+
+local function createBlip(apartmentCoords, label)
+	local blip = AddBlipForCoord(apartmentCoords.x, apartmentCoords.y, apartmentCoords.z)
+	SetBlipSprite(blip, 40)
+	SetBlipAsShortRange(blip, true)
+	SetBlipScale(blip, 0.8)
+	SetBlipColour(blip, 2)
+	BeginTextCommandSetBlipName('STRING')
+	AddTextComponentString(label)
+	EndTextCommandSetBlipName(blip)
+	return blip
+end
 
 local function prepareKeyMenu()
     local keyholders = lib.callback.await('qbx_properties:callback:requestKeyHolders')
@@ -118,7 +136,32 @@ local function prepareManageMenu()
                 prepareDoorbellMenu()
             end
         },
+        {
+            title = locale('menu.start_decorating'),
+            icon = 'shrimp',
+            onSelect = function()
+                ToggleDecorating()
+            end
+        }
     }
+    if isPropertyRental then
+        options[#options+1] = {
+            title = 'Stop Renting',
+            icon = 'file-invoice-dollar',
+            arrow = true,
+            onSelect = function()
+                local alert = lib.alertDialog({
+                    header = 'Stop Renting',
+                    content = 'Are you sure that you want to stop renting this place?',
+                    centered = true,
+                    cancel = true
+                })
+                if alert == 'confirm' then
+                    TriggerServerEvent('qbx_properties:server:stopRenting')
+                end
+            end
+        }
+    end
     lib.registerContext({
         id = 'qbx_properties_manageMenu',
         title = locale('menu.manage_property'),
@@ -177,7 +220,7 @@ local function checkInteractions()
             local sleep = 800
             local playerCoords = GetEntityCoords(cache.ped)
             for i = 1, #interactions do
-                if #(playerCoords - interactions[i].coords) < 1.5 then
+                if #(playerCoords - interactions[i].coords) < 1.5 and not IsDecorating then
                     sleep = 0
                     interactOptions[interactions[i].type](interactions[i].coords)
                 end
@@ -187,10 +230,11 @@ local function checkInteractions()
     end)
 end
 
-RegisterNetEvent('qbx_properties:client:updateInteractions', function(interactionsData)
+RegisterNetEvent('qbx_properties:client:updateInteractions', function(interactionsData, isRental)
     DoScreenFadeIn(1000)
     interactions = interactionsData
     insideProperty = true
+    isPropertyRental = isRental
     checkInteractions()
 end)
 
@@ -204,29 +248,42 @@ end)
 RegisterNetEvent('qbx_properties:client:loadDecorations', function(decorations)
     for i = 1, #decorations do
         local decoration = decorations[i]
-        lib.requestModel(decoration.model, 2000)
-        decorationObjects[i] = CreateObjectNoOffset(decoration.model, decoration.coords.x, decoration.coords.y, decoration.coords.z, false, false, false)
-        FreezeEntityPosition(decorationObjects[i], true)
-        SetEntityHeading(decorationObjects[i], decoration.coords.w)
+        lib.requestModel(decoration.model, 5000)
+        DecorationObjects[decoration.id] = CreateObjectNoOffset(decoration.model, decoration.coords.x, decoration.coords.y, decoration.coords.z, false, false, false)
+        SetEntityCollision(DecorationObjects[decoration.id], true, true)
+        FreezeEntityPosition(DecorationObjects[decoration.id], true)
+        SetEntityRotation(DecorationObjects[decoration.id], decoration.rotation.x, decoration.rotation.y, decoration.rotation.z, 2, false)
         SetModelAsNoLongerNeeded(decoration.model)
     end
+end)
+
+RegisterNetEvent('qbx_properties:client:addDecoration', function(id, hash, coords, rotation)
+    lib.requestModel(hash, 5000)
+    DecorationObjects[id] = CreateObjectNoOffset(hash, coords.x, coords.y, coords.z, false, false, false)
+    FreezeEntityPosition(DecorationObjects[id], true)
+    SetEntityRotation(DecorationObjects[id], rotation.x, rotation.y, rotation.z, 2, false)
+    SetModelAsNoLongerNeeded(hash)
+end)
+
+RegisterNetEvent('qbx_properties:client:removeDecoration', function(objectId)
+    if DoesEntityExist(DecorationObjects[objectId]) then DeleteEntity(DecorationObjects[objectId]) end
+    DecorationObjects[objectId] = nil
 end)
 
 RegisterNetEvent('qbx_properties:client:unloadProperty', function()
     DoScreenFadeIn(1000)
     insideProperty = false
     if DoesEntityExist(interiorShell) then DeleteEntity(interiorShell) end
-    for i = 1, #decorationObjects do
-        if DoesEntityExist(decorationObjects[i]) then DeleteEntity(decorationObjects[i]) end
+    for _, v in pairs(DecorationObjects) do
+        if DoesEntityExist(v) then DeleteEntity(v) end
     end
     interiorShell = nil
-    decorationObjects = {}
+    DecorationObjects = {}
 end)
 
-local function singlePropertyMenu(property)
-    local playerData = exports.qbx_core:GetPlayerData()
+local function singlePropertyMenu(property, noBackMenu)
     local options = {}
-    if playerData.citizenid == property.owner or lib.table.contains(json.decode(property.keyholders), playerData.citizenid) then
+    if QBX.PlayerData.citizenid == property.owner or lib.table.contains(json.decode(property.keyholders), QBX.PlayerData.citizenid) then
         options[#options + 1] = {
             title = locale('menu.enter'),
             icon = 'cog',
@@ -238,6 +295,42 @@ local function singlePropertyMenu(property)
             serverEvent = 'qbx_properties:server:enterProperty',
             args = { id = property.id }
         }
+    elseif property.owner == nil then
+        if property.rent_interval then
+            options[#options + 1] = {
+                title = 'Rent',
+                icon = 'dollar-sign',
+                arrow = true,
+                onSelect = function()
+                    local alert = lib.alertDialog({
+                        header = string.format('Renting - %s', property.property_name),
+                        content = string.format('Are you sure you want to rent %s for $%s which will be billed every %sh(s)?', property.property_name, property.price, property.rent_interval),
+                        centered = true,
+                        cancel = true
+                    })
+                    if alert == 'confirm' then
+                        TriggerServerEvent('qbx_properties:server:rentProperty', property.id)
+                    end
+                end,
+            }
+        else
+            options[#options + 1] = {
+                title = 'Buy',
+                icon = 'dollar-sign',
+                arrow = true,
+                onSelect = function()
+                    local alert = lib.alertDialog({
+                        header = string.format('Buying - %s', property.property_name),
+                        content = string.format('Are you sure you want to buy %s for $%s?', property.property_name, property.price),
+                        centered = true,
+                        cancel = true
+                    })
+                    if alert == 'confirm' then
+                        TriggerServerEvent('qbx_properties:server:buyProperty', property.id)
+                    end
+                end,
+            }
+        end
     else
         options[#options + 1] = {
             title = locale('menu.ring_doorbell'),
@@ -247,10 +340,13 @@ local function singlePropertyMenu(property)
             args = { id = property.id }
         }
     end
+    local menu = 'qbx_properties_propertiesMenu'
+    ---@diagnostic disable-next-line: cast-local-type
+    if noBackMenu then menu = nil end
     lib.registerContext({
         id = 'qbx_properties_propertyMenu',
         title = property.property_name,
-        menu = 'qbx_properties_propertiesMenu',
+        menu = menu,
         options = options
     })
     lib.showContext('qbx_properties_propertyMenu')
@@ -267,9 +363,8 @@ local function propertyMenu(propertyList, owned)
             end
         }
     }
-    local playerData = exports.qbx_core:GetPlayerData()
     for i = 1, #propertyList do
-        if owned and propertyList[i].owner == playerData.citizenid or lib.table.contains(json.decode(propertyList[i].keyholders), playerData.citizenid) then
+        if owned and propertyList[i].owner == QBX.PlayerData.citizenid or lib.table.contains(json.decode(propertyList[i].keyholders), QBX.PlayerData.citizenid) then
             options[#options + 1] = {
                 title = propertyList[i].property_name,
                 icon = 'home',
@@ -300,14 +395,22 @@ end
 function PreparePropertyMenu(propertyCoords)
     local propertyList = lib.callback.await('qbx_properties:callback:requestProperties', false, propertyCoords)
     if #propertyList == 1 then
-        singlePropertyMenu(propertyList[1])
+        singlePropertyMenu(propertyList[1], true)
     else
         propertyMenu(propertyList)
     end
 end
 
 CreateThread(function()
-    local properties = lib.callback.await('qbx_properties:callback:loadProperties')
+    for i = 1, #sharedConfig.apartmentOptions do
+        local data = sharedConfig.apartmentOptions[i]
+
+        if not blips[data.enter] then
+            blips[data.enter] = createBlip(data.enter, data.label)
+        end
+    end
+
+    properties = lib.callback.await('qbx_properties:callback:loadProperties')
     while true do
         local sleep = 800
         local playerCoords = GetEntityCoords(cache.ped)
@@ -327,9 +430,17 @@ end)
 RegisterNetEvent('qbx_properties:client:concealPlayers', function(playerIds)
     local players = GetActivePlayers()
     for i = 1, #players do NetworkConcealPlayer(players[i], false, false) end
-    for i = 1, #players do
-        if not lib.table.contains(playerIds, GetPlayerServerId(players[i])) then
-            NetworkConcealPlayer(players[i], true, false)
+    concealWhitelist = playerIds
+    if not isConcealing then
+        isConcealing = true
+        while isConcealing do
+            players = GetActivePlayers()
+            for i = 1, #players do
+                if not lib.table.contains(concealWhitelist, GetPlayerServerId(players[i])) then
+                    NetworkConcealPlayer(players[i], true, false)
+                end
+            end
+            Wait(3000)
         end
     end
 end)
@@ -337,4 +448,10 @@ end)
 RegisterNetEvent('qbx_properties:client:revealPlayers', function()
     local players = GetActivePlayers()
     for i = 1, #players do NetworkConcealPlayer(players[i], false, false) end
+    isConcealing = false
+end)
+
+RegisterNetEvent('qbx_properties:client:addProperty', function(propertyCoords)
+    if lib.table.contains(properties, propertyCoords) then return end
+    properties[#properties + 1] = propertyCoords
 end)
