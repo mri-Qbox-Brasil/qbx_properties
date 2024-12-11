@@ -1,13 +1,47 @@
-local BoardCoords = vector4(-44.19, -585.99, 87.71, 250.0)
+local sharedConfig = require 'config.shared'
+local BoardCoords = vec4(-44.19, -585.99, 87.71, 250.0)
 local BoardModel = `tr_prop_tr_planning_board_01a`
 local RenderTarget = 'modgarage_01'
-local Board, scaleform, currentButtonID = nil, 0, 1
+local Board, scaleform, buttonsScaleform, currentButtonID = nil, 0, 0, 1
 local previewCam
 
 local function SetupBoard()
-    while not HasModelLoaded(BoardModel) do RequestModel(BoardModel) Wait(0) end
+    lib.requestModel(BoardModel, 10000)
     Board = CreateObject(BoardModel, BoardCoords.x, BoardCoords.y, BoardCoords.z, false, false, false)
     SetEntityHeading(Board, BoardCoords.w)
+    SetModelAsNoLongerNeeded(BoardModel)
+end
+
+local function SetupInstructionalButton(index, control, text)
+    BeginScaleformMovieMethod(buttonsScaleform, 'SET_DATA_SLOT')
+
+    ScaleformMovieMethodAddParamInt(index)
+
+    ScaleformMovieMethodAddParamPlayerNameString(GetControlInstructionalButton(2, control, true))
+
+    BeginTextCommandScaleformString('STRING')
+    AddTextComponentSubstringKeyboardDisplay(text)
+    EndTextCommandScaleformString()
+
+    EndScaleformMovieMethod()
+end
+
+local function SetupInstructionalScaleform()
+    DrawScaleformMovieFullscreen(buttonsScaleform, 255, 255, 255, 0, 0)
+
+    BeginScaleformMovieMethod(buttonsScaleform, 'CLEAR_ALL')
+    EndScaleformMovieMethod()
+
+    BeginScaleformMovieMethod(buttonsScaleform, 'SET_CLEAR_SPACE')
+    ScaleformMovieMethodAddParamInt(200)
+    EndScaleformMovieMethod()
+
+    SetupInstructionalButton(0, 191, locale('instructButtons.submit'))
+    SetupInstructionalButton(1, 187, locale('instructButtons.down'))
+    SetupInstructionalButton(2, 188, locale('instructButtons.up'))
+
+    BeginScaleformMovieMethod(buttonsScaleform, 'DRAW_INSTRUCTIONAL_BUTTONS')
+    EndScaleformMovieMethod()
 end
 
 local function CreateNamedRenderTargetForModel(name, model)
@@ -15,29 +49,40 @@ local function CreateNamedRenderTargetForModel(name, model)
 	if not IsNamedRendertargetRegistered(name) then
 		RegisterNamedRendertarget(name, false)
 	end
+
 	if not IsNamedRendertargetLinked(model) then
 		LinkNamedRendertarget(model)
 	end
+
 	if IsNamedRendertargetRegistered(name) then
 		handle = GetNamedRendertargetRenderId(name)
 	end
+
 	return handle
 end
 
 local function StartScaleform()
-    scaleform = RequestScaleformMovie('AUTO_SHOP_BOARD')
-    while not HasScaleformMovieLoaded(scaleform) do Wait(0) end
+    scaleform = lib.requestScaleformMovie('AUTO_SHOP_BOARD', 10000) or 0
+    buttonsScaleform = lib.requestScaleformMovie('INSTRUCTIONAL_BUTTONS', 10000) or 0
     CreateThread(function()
+        SetupInstructionalScaleform()
         while DoesCamExist(previewCam) do
             local Handle = CreateNamedRenderTargetForModel(RenderTarget, BoardModel)
             SetTextRenderId(Handle)
             SetScriptGfxDrawBehindPausemenu(true)
             SetScaleformFitRendertarget(scaleform, true)
             DrawScaleformMovie(scaleform, 0.25, 0.5, 0.5, 1.0, 255, 255, 255, 255, 0)
-            SetTextRenderId(GetDefaultScriptRendertargetRenderId())
+            SetTextRenderId(1)
+            HideHudComponentThisFrame(6)
+            HideHudComponentThisFrame(7)
+            HideHudComponentThisFrame(9)
+            DrawScaleformMovieFullscreen(buttonsScaleform, 255, 255, 255, 255, 0)
             SetScriptGfxDrawBehindPausemenu(false)
             Wait(0)
         end
+
+        SetScaleformMovieAsNoLongerNeeded(scaleform)
+        SetScaleformMovieAsNoLongerNeeded(buttonsScaleform)
     end)
 end
 
@@ -57,19 +102,20 @@ local function SetupScaleform()
     elseif currentButtonID < 7 then
         StartingPoint = 4
     end
+
     for i = StartingPoint, StartingPoint + 2 do
         ScaleformMovieMethodAddParamTextureNameString(string.format('selection%s', i))
         BeginTextCommandScaleformString('STRING')
-        AddTextComponentSubstringPlayerName(ApartmentOptions[i].label)
+        AddTextComponentSubstringPlayerName(sharedConfig.ApartmentOptions[i].label)
         EndTextCommandScaleformString()
         BeginTextCommandScaleformString('STRING')
-        AddTextComponentSubstringPlayerName(ApartmentOptions[i].description)
+        AddTextComponentSubstringPlayerName(sharedConfig.ApartmentOptions[i].description)
         EndTextCommandScaleformString()
         ScaleformMovieMethodAddParamInt(0)
     end
 
     BeginTextCommandScaleformString('STRING')
-    AddTextComponentSubstringPlayerName(string.format('%s/%s', currentButtonID, #ApartmentOptions))
+    AddTextComponentSubstringPlayerName(string.format('%s/%s', currentButtonID, #sharedConfig.ApartmentOptions))
     EndTextCommandScaleformString()
 
     ScaleformMovieMethodAddParamInt(0)
@@ -110,9 +156,12 @@ function SetupCamera(apartmentCam)
 end
 
 function StopCamera()
-    SetCamActive(previewCam, false)
-    DestroyCam(previewCam, true)
-    RenderScriptCams(false, false, 1, true, true)
+    if DoesCamExist(previewCam) then
+        SetCamActive(previewCam, false)
+        RenderScriptCams(false, false, 0, true, true)
+        DestroyCam(previewCam, true)
+        previewCam = nil
+    end
 end
 
 function ManagePlayer()
@@ -123,15 +172,27 @@ function ManagePlayer()
     end)
 end
 
+local function inputConfirm(apartmentIndex)
+    DoScreenFadeOut(500)
+    while not IsScreenFadedOut() do Wait(0) end
+    FreezeEntityPosition(cache.ped, false)
+    SetEntityCoords(cache.ped, sharedConfig.ApartmentOptions[apartmentIndex].enter.x, sharedConfig.ApartmentOptions[apartmentIndex].enter.y, sharedConfig.ApartmentOptions[apartmentIndex].enter.z - 2.0, false, false, false, false)
+    Wait(0)
+    TriggerServerEvent('qbx_properties:server:apartmentSelect', apartmentIndex)
+    Wait(1000) -- Wait for player to spawn correctly so clothing menu can load in nice
+    TriggerServerEvent('QBCore:Server:OnPlayerLoaded')
+    TriggerEvent('QBCore:Client:OnPlayerLoaded')
+end
+
 local function InputHandler()
     while true do
         if IsControlJustReleased(0, 188) then
-            currentButtonID = currentButtonID - 1
-            if currentButtonID < 1 then currentButtonID = 1 end
+            currentButtonID -= 1
+            if currentButtonID < 1 then currentButtonID = #ApartmentOptions end
             SetupScaleform()
         elseif IsControlJustReleased(0, 187) then
-            currentButtonID = currentButtonID + 1
-            if currentButtonID > #ApartmentOptions then currentButtonID = #ApartmentOptions end
+            currentButtonID += 1
+            if currentButtonID > #ApartmentOptions then currentButtonID = 1 end
             SetupScaleform()
         elseif IsControlJustReleased(0, 191) then
             local alert = lib.alertDialog({
@@ -146,7 +207,11 @@ local function InputHandler()
                 FreezeEntityPosition(cache.ped, false)
                 SetEntityCoords(cache.ped, ApartmentOptions[currentButtonID].enter.x, ApartmentOptions[currentButtonID].enter.y, ApartmentOptions[currentButtonID].enter.z - 2.0, false, false, false, false)
                 Wait(0)
-                TriggerServerEvent('qbx_properties:server:apartmentSelect', currentButtonID)
+                -- TriggerServerEvent('qbx_properties:server:apartmentSelect', currentButtonID)
+                TriggerServerEvent("ps-housing:server:createNewApartment", ApartmentOptions[currentButtonID].label)
+                Wait(1000) -- Wait for player to spawn correctly so clothing menu can load in nice
+                TriggerServerEvent('QBCore:Server:OnPlayerLoaded')
+                TriggerEvent('QBCore:Client:OnPlayerLoaded')
                 break
             end
         end
@@ -155,7 +220,15 @@ local function InputHandler()
     StopCamera()
 end
 
-AddEventHandler('apartments:client:setupSpawnUI', function()
+AddEventHandler('ps-housing:setApartments', function(data)
+    ApartmentOptions = data
+end)
+
+RegisterNetEvent('apartments:client:setupSpawnUI', function()
+    if #sharedConfig.ApartmentOptions == 1 then
+        inputConfirm(1)
+        return
+    end
     Wait(400)
     ManagePlayer()
     SetupCamera(true)
