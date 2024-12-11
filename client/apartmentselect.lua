@@ -106,16 +106,16 @@ local function SetupScaleform()
     for i = StartingPoint, StartingPoint + 2 do
         ScaleformMovieMethodAddParamTextureNameString(string.format('selection%s', i))
         BeginTextCommandScaleformString('STRING')
-        AddTextComponentSubstringPlayerName(sharedConfig.ApartmentOptions[i].label)
+        AddTextComponentSubstringPlayerName(sharedConfig.apartmentOptions[i].label)
         EndTextCommandScaleformString()
         BeginTextCommandScaleformString('STRING')
-        AddTextComponentSubstringPlayerName(sharedConfig.ApartmentOptions[i].description)
+        AddTextComponentSubstringPlayerName(sharedConfig.apartmentOptions[i].description)
         EndTextCommandScaleformString()
         ScaleformMovieMethodAddParamInt(0)
     end
 
     BeginTextCommandScaleformString('STRING')
-    AddTextComponentSubstringPlayerName(string.format('%s/%s', currentButtonID, #sharedConfig.ApartmentOptions))
+    AddTextComponentSubstringPlayerName(string.format('%s/%s', currentButtonID, #sharedConfig.apartmentOptions))
     EndTextCommandScaleformString()
 
     ScaleformMovieMethodAddParamInt(0)
@@ -132,6 +132,7 @@ local function SetupScaleform()
             ScaleformMovieMethodAddParamBool(false)
         end
     end
+
     EndScaleformMovieMethod()
 end
 
@@ -176,7 +177,7 @@ local function inputConfirm(apartmentIndex)
     DoScreenFadeOut(500)
     while not IsScreenFadedOut() do Wait(0) end
     FreezeEntityPosition(cache.ped, false)
-    SetEntityCoords(cache.ped, sharedConfig.ApartmentOptions[apartmentIndex].enter.x, sharedConfig.ApartmentOptions[apartmentIndex].enter.y, sharedConfig.ApartmentOptions[apartmentIndex].enter.z - 2.0, false, false, false, false)
+    SetEntityCoords(cache.ped, sharedConfig.apartmentOptions[apartmentIndex].enter.x, sharedConfig.apartmentOptions[apartmentIndex].enter.y, sharedConfig.apartmentOptions[apartmentIndex].enter.z - 2.0, false, false, false, false)
     Wait(0)
     TriggerServerEvent('qbx_properties:server:apartmentSelect', apartmentIndex)
     Wait(1000) -- Wait for player to spawn correctly so clothing menu can load in nice
@@ -188,16 +189,16 @@ local function InputHandler()
     while true do
         if IsControlJustReleased(0, 188) then
             currentButtonID -= 1
-            if currentButtonID < 1 then currentButtonID = #ApartmentOptions end
+            if currentButtonID < 1 then currentButtonID = #apartmentOptions end
             SetupScaleform()
         elseif IsControlJustReleased(0, 187) then
             currentButtonID += 1
-            if currentButtonID > #ApartmentOptions then currentButtonID = 1 end
+            if currentButtonID > #apartmentOptions then currentButtonID = 1 end
             SetupScaleform()
         elseif IsControlJustReleased(0, 191) then
             local alert = lib.alertDialog({
                 header = locale('alert.apartment_selection'),
-                content = string.format(locale('alert.are_you_sure'), ApartmentOptions[currentButtonID].label),
+                content = string.format(locale('alert.are_you_sure'), sharedConfig.apartmentOptions[currentButtonID].label),
                 centered = true,
                 cancel = true
             })
@@ -205,10 +206,10 @@ local function InputHandler()
                 DoScreenFadeOut(500)
                 while not IsScreenFadedOut() do Wait(0) end
                 FreezeEntityPosition(cache.ped, false)
-                SetEntityCoords(cache.ped, ApartmentOptions[currentButtonID].enter.x, ApartmentOptions[currentButtonID].enter.y, ApartmentOptions[currentButtonID].enter.z - 2.0, false, false, false, false)
+                SetEntityCoords(cache.ped, apartmentOptions[currentButtonID].enter.x, apartmentOptions[currentButtonID].enter.y, apartmentOptions[currentButtonID].enter.z - 2.0, false, false, false, false)
                 Wait(0)
                 -- TriggerServerEvent('qbx_properties:server:apartmentSelect', currentButtonID)
-                TriggerServerEvent("ps-housing:server:createNewApartment", ApartmentOptions[currentButtonID].label)
+                TriggerServerEvent("ps-housing:server:createNewApartment", apartmentOptions[currentButtonID].label)
                 Wait(1000) -- Wait for player to spawn correctly so clothing menu can load in nice
                 TriggerServerEvent('QBCore:Server:OnPlayerLoaded')
                 TriggerEvent('QBCore:Client:OnPlayerLoaded')
@@ -221,11 +222,11 @@ local function InputHandler()
 end
 
 AddEventHandler('ps-housing:setApartments', function(data)
-    ApartmentOptions = data
+    apartmentOptions = data
 end)
 
 RegisterNetEvent('apartments:client:setupSpawnUI', function()
-    if #sharedConfig.ApartmentOptions == 1 then
+    if #sharedConfig.apartmentOptions == 1 then
         inputConfirm(1)
         return
     end

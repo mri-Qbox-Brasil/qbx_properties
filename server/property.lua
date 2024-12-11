@@ -119,10 +119,12 @@ end)
 local function hasAccess(citizenId, propertyId)
     local property = MySQL.single.await('SELECT owner, keyholders FROM properties WHERE id = ?', {propertyId})
     if citizenId == property.owner then return true end
+
     local keyholders = json.decode(property.keyholders)
     for i = 1, #keyholders do
         if citizenId == keyholders[i] then return true end
     end
+
     return false
 end
 
@@ -269,12 +271,14 @@ RegisterNetEvent('qbx_properties:server:removeKeyholder', function(keyholderCid)
 
     local keyholders = json.decode(result.keyholders)
     if not lib.table.contains(keyholders, keyholderCid) then return end
+
     for i = 1, #keyholders do
         if keyholders[i] == keyholderCid then
             table.remove(keyholders, i)
             break
         end
     end
+
     MySQL.Sync.execute('UPDATE properties SET keyholders = ? WHERE id = ?', {json.encode(keyholders), propertyId})
     local keyholder = exports.qbx_core:GetOfflinePlayer(keyholderCid)
     exports.qbx_core:Notify(playerSource, keyholder.PlayerData.charinfo.firstname.. locale('notify.removed_as_keyholder'))

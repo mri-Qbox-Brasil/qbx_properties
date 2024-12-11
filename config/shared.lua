@@ -1,7 +1,7 @@
 return {
     shellUndergroundOffset = 50.0,
 
-    ApartmentOptions = {
+    apartmentOptions = {
         {
             interior = 'DellPerroHeightsApt4',
             label = 'Fantastic Plaza',
