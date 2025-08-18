@@ -213,6 +213,7 @@ local function InputHandler()
                 Wait(1000) -- Wait for player to spawn correctly so clothing menu can load in nice
                 TriggerServerEvent('QBCore:Server:OnPlayerLoaded')
                 TriggerEvent('QBCore:Client:OnPlayerLoaded')
+                SetEntityVisible(PlayerPedId(), true, false)
                 break
             end
         end
