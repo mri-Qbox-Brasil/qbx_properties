@@ -95,21 +95,25 @@ local function SetupScaleform()
 
     BeginScaleformMovieMethod(scaleform, 'SHOW_SELECTION_SCREEN')
 
-    -- Smart math that isn't modular at all. Can't wait for the support questions for this one
-    local StartingPoint
-    if currentButtonID < 4 then
-        StartingPoint = 1
-    elseif currentButtonID < 7 then
-        StartingPoint = 4
-    end
+    local startIndex = currentButtonID - ((currentButtonID - 1) % 3)
+    local endIndex = startIndex + 2
 
-    for i = StartingPoint, StartingPoint + 2 do
-        ScaleformMovieMethodAddParamTextureNameString(string.format('selection%s', i))
-        BeginTextCommandScaleformString('STRING')
-        AddTextComponentSubstringPlayerName(sharedConfig.apartmentOptions[i].label)
-        EndTextCommandScaleformString()
-        BeginTextCommandScaleformString('STRING')
-        AddTextComponentSubstringPlayerName(sharedConfig.apartmentOptions[i].description)
+    for i = startIndex, endIndex do
+        if sharedConfig.apartmentOptions[i] then
+            ScaleformMovieMethodAddParamTextureNameString(string.format('selection%s', ((i - 1) % 6) + 1))
+            BeginTextCommandScaleformString('STRING')
+            AddTextComponentSubstringPlayerName(sharedConfig.apartmentOptions[i].label)
+            EndTextCommandScaleformString()
+            BeginTextCommandScaleformString('STRING')
+            AddTextComponentSubstringPlayerName(sharedConfig.apartmentOptions[i].description)
+        else
+            ScaleformMovieMethodAddParamTextureNameString('empty')
+            BeginTextCommandScaleformString('STRING')
+            AddTextComponentSubstringPlayerName('')
+            EndTextCommandScaleformString()
+            BeginTextCommandScaleformString('STRING')
+            AddTextComponentSubstringPlayerName('')
+        end
         EndTextCommandScaleformString()
         ScaleformMovieMethodAddParamInt(0)
     end
@@ -120,12 +124,12 @@ local function SetupScaleform()
 
     ScaleformMovieMethodAddParamInt(0)
 
-    ScaleformMovieMethodAddParamBool(true)
-    ScaleformMovieMethodAddParamBool(true)
-    ScaleformMovieMethodAddParamBool(true)
+    for i = startIndex, endIndex do
+        ScaleformMovieMethodAddParamBool(sharedConfig.apartmentOptions[i] ~= nil)
+    end
 
-    -- Same "modular" bullshit here. Had no success with CURRENT_SELECTION nor CURRENT_ROLLOVER, not sure why.
-    for i = StartingPoint, StartingPoint + 2 do
+    -- Had no success with CURRENT_SELECTION nor CURRENT_ROLLOVER, not sure why.
+    for i = startIndex, endIndex do
         if i == currentButtonID then
             ScaleformMovieMethodAddParamBool(true)
         else
@@ -183,17 +187,33 @@ local function inputConfirm(apartmentIndex)
     Wait(1000) -- Wait for player to spawn correctly so clothing menu can load in nice
     TriggerServerEvent('QBCore:Server:OnPlayerLoaded')
     TriggerEvent('QBCore:Client:OnPlayerLoaded')
+    DeleteEntity(Board)
+    Board = nil
 end
 
 local function InputHandler()
+    local coords = sharedConfig.apartmentOptions[currentButtonID].enter
+    local blip = AddBlipForCoord(coords.x, coords.y, coords.z)
+    SetBlipSprite(blip, 40)
+    ShowTickOnBlip(blip, true)
+    LockMinimapAngle(0.0)
     while true do
+        SetBigmapActive(true, false)
+        DisplayRadar(true)
+        SetRadarAsExteriorThisFrame()
         if IsControlJustReleased(0, 188) then
             currentButtonID -= 1
             if currentButtonID < 1 then currentButtonID = #apartmentOptions end
+            coords = sharedConfig.apartmentOptions[currentButtonID].enter
+            SetBlipCoords(blip, coords.x, coords.y, coords.z)
+            LockMinimapPosition(coords.x, coords.y)
             SetupScaleform()
         elseif IsControlJustReleased(0, 187) then
             currentButtonID += 1
             if currentButtonID > #apartmentOptions then currentButtonID = 1 end
+            coords = apartmentOptions[currentButtonID].enter
+            SetBlipCoords(blip, coords.x, coords.y, coords.z)
+            LockMinimapPosition(coords.x, coords.y)
             SetupScaleform()
         elseif IsControlJustReleased(0, 191) then
             local alert = lib.alertDialog({
@@ -219,6 +239,11 @@ local function InputHandler()
         end
         Wait(0)
     end
+    SetBigmapActive(false, false)
+    DisplayRadar(false)
+    RemoveBlip(blip)
+    UnlockMinimapPosition()
+    UnlockMinimapAngle()
     StopCamera()
 end
 

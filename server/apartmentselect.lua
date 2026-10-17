@@ -1,5 +1,6 @@
 local config = require 'config.server'
 local sharedConfig = require 'config.shared'
+local logger = require '@qbx_core.modules.logger'
 
 RegisterNetEvent('qbx_properties:server:apartmentSelect', function(apartmentIndex)
     local playerSource = source --[[@as number]]
@@ -50,8 +51,26 @@ RegisterNetEvent('qbx_properties:server:apartmentSelect', function(apartmentInde
         json.encode(stashData),
     })
 
+    logger.log({
+        source = playerSource,
+        event = 'qbx_properties:server:apartmentSelect',
+        message = locale('logs.apartment_selected', player.PlayerData.citizenid, sharedConfig.apartmentOptions[apartmentIndex].label, apartmentNumber),
+        webhook = config.discordWebhook
+    })
+
     TriggerClientEvent('qbx_properties:client:addProperty', -1, sharedConfig.apartmentOptions[apartmentIndex].enter)
     EnterProperty(playerSource, id, true)
+
+    local spawnCoord = sharedConfig.interiors[interior].firstspawn
+    if spawnCoord then
+        if type(interior) == 'number' then
+            spawnCoord = CalculateOffsetCoords(sharedConfig.apartmentOptions[apartmentIndex].enter, spawnCoord)
+        end
+        local ped = GetPlayerPed(playerSource)
+        SetEntityCoords(ped, spawnCoord.x, spawnCoord.y, spawnCoord.z, false, false, false, false)
+        if spawnCoord.w then SetEntityHeading(ped, spawnCoord.w) end
+    end
+
     Wait(200)
     TriggerClientEvent('qb-clothes:client:CreateFirstCharacter', playerSource)
 end)

@@ -17,7 +17,8 @@
         "price": "Price",
         "price_description": "The purchasing price or the price deducted for rent",
         "rent_interval": "Rent interval",
-        "rent_interval_description": "The interval in which the rent will be deducted in hours (makes the property rentable instead of purchasable)"
+        "rent_interval_description": "The interval in which the rent will be deducted in hours (makes the property rentable instead of purchasable)",
+        "add_garage": "Add Garage"
     },
     "menu": {
         "add_keyholder": "Add Keyholder",
@@ -53,5 +54,19 @@
         "clothing": "[E] - Clothing | [G] - Outfits",
         "logout": "[E] - Logout",
         "view_property": "[E] - View Property"
+    },
+    "logs": {
+        "create_property": "Attempting to create a property.",
+        "property_created": "Property %s created successfully.",
+        "enter_property": "Player %s entered property %s.",
+        "exit_property": "Player %s exited property id %s.",
+        "apartment_selected": "Player %s selected apartment %s %s.",
+        "added_keyholder": "Added %s as a keyholder to the property %s.",
+        "removed_keyholder": "Removed %s as a keyholder to the property %s.",
+        "rent_property": "Player %s rented property %s.",
+        "buy_property": "Player %s bought property %s.",
+        "stop_renting": "Player %s stopped renting property %s.",
+        "add_decoration": "Player %s added decoration %s to property %s.",
+        "remove_decoration": "Player %s removed decoration %s from property %s."
     }
 }

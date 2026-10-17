@@ -100,10 +100,13 @@ function ToggleDecorating()
         if cursorMode then
             local entity = SelectEntityAtCursor((1 << 5), true)
             if entity ~= last then
-                if lib.table.contains(DecorationObjects, entity) then
+                if lib.table.contains(DecorationObjects, entity) and DoesEntityExist(entity) then
                     SetEntityDrawOutline(entity, true)
                 end
-                SetEntityDrawOutline(last, false)
+
+                if DoesEntityExist(last) then
+                    SetEntityDrawOutline(last, false)
+                end
                 last = entity
             end
             if IsDisabledControlJustReleased(0, 24) and previewObject ~= entity and entity ~= 0 then
@@ -122,7 +125,9 @@ function ToggleDecorating()
                     DeleteEntity(previewObject)
                 end
             end
-            SetEntityDrawOutline(last, false)
+            if DoesEntityExist(last) then
+                SetEntityDrawOutline(last, false)
+            end
             ToggleDecorating()
         end
         if IsDisabledControlJustReleased(0, 38) then
@@ -134,7 +139,9 @@ function ToggleDecorating()
             if cursorMode then
                 EnterCursorMode()
             else
-                SetEntityDrawOutline(last, false)
+                if DoesEntityExist(last) then
+                    SetEntityDrawOutline(last, false)
+                end
                 LeaveCursorMode()
             end
         end
@@ -229,7 +236,7 @@ for k, v in pairs(config.furniture) do
                 SetEntityCollision(previewObject, false, false)
                 SetEntityDrawOutline(previewObject, true)
             end,
-            image = string.format('nui://qbx_properties/screenshots/%s.png', furniture.object),
+            image = string.format('nui://qbx_properties/screenshots/%s.webp', furniture.object),
             args = {
                 object = furniture.object,
                 label = furniture.label

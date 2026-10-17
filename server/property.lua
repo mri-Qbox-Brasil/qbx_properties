@@ -1,11 +1,30 @@
+local config = require 'config.server'
 local sharedConfig = require 'config.shared'
+local logger = require '@qbx_core.modules.logger'
+
 local enteredProperty = {}
 local insideProperty = {}
 local citizenid = {}
 local ring = {}
 
+exports.ox_inventory:registerHook('openInventory', function(payload)
+    local source = payload.source
+    local propertyName, ownerIdentifier = payload.inventoryId:match("^qbx_properties_([%w%s]+):([A-Z%d]+)$")
+
+    if not enteredProperty[source] then return false end
+
+    local result = MySQL.single.await('SELECT `id` FROM `properties` WHERE `property_name` = ? AND `owner` = ?', {propertyName, ownerIdentifier})
+
+    return result.id == enteredProperty[source]
+end, {
+    inventoryFilter = {
+        '^qbx_properties_[%w]+',
+    }
+})
+
 function EnterProperty(playerSource, id, isSpawn)
     local property = MySQL.single.await('SELECT * FROM properties WHERE id = ?', {id})
+    if not property then return end -- Lua and its stupid need check nil warnings
     local propertyCoords = json.decode(property.coords)
     propertyCoords = vec3(propertyCoords.x, propertyCoords.y, propertyCoords.z)
     local playerCoords = GetEntityCoords(GetPlayerPed(playerSource))
@@ -60,7 +79,14 @@ function EnterProperty(playerSource, id, isSpawn)
 
     TriggerClientEvent('qbx_properties:client:loadDecorations', playerSource, decorations)
 
-    TriggerClientEvent('qbx_properties:client:updateInteractions', playerSource, interactions, type(property.rent_interval) == 'number')
+    TriggerClientEvent('qbx_properties:client:updateInteractions', playerSource, interactions, property.interior, type(property.rent_interval) == 'number')
+
+    logger.log({
+        source = playerSource,
+        event = 'qbx_properties:server:enterProperty',
+        message = locale('logs.enter_property', player.PlayerData.citizenid, property.property_name),
+        webhook = config.discordWebhook
+    })
 end
 
 ---@param playerSource integer
@@ -83,6 +109,7 @@ local function exitProperty(playerSource, isLogout)
     end
 
     lib.triggerClientEvent('qbx_properties:client:concealPlayers', insideProperty[enteredProperty[playerSource]], insideProperty[enteredProperty[playerSource]])
+    local logPropertyId = enteredProperty[playerSource]
     enteredProperty[playerSource] = nil
 
     if isLogout then return end
@@ -91,6 +118,13 @@ local function exitProperty(playerSource, isLogout)
     if not player then return end
 
     player.Functions.SetMetaData('currentPropertyId', nil)
+
+    logger.log({
+        source = playerSource,
+        event = 'qbx_properties:server:exitProperty',
+        message = locale('logs.exit_property', player.PlayerData.citizenid, logPropertyId),
+        webhook = config.discordWebhook
+    })
 end
 
 RegisterNetEvent('qbx_properties:server:exitProperty', function()
@@ -259,6 +293,13 @@ RegisterNetEvent('qbx_properties:server:addKeyholder', function(keyholderCid)
     local keyholder = exports.qbx_core:GetPlayerByCitizenId(keyholderCid)
     exports.qbx_core:Notify(playerSource, keyholder.PlayerData.charinfo.firstname.. locale('notify.keyholder'))
     exports.qbx_core:Notify(keyholder.PlayerData.source, locale('notify.added_as_keyholder'))
+
+    logger.log({
+        source = playerSource,
+        event = 'qbx_properties:server:addKeyholder',
+        message = locale('logs.added_keyholder', keyholderCid, propertyId),
+        webhook = config.discordWebhook
+    })
 end)
 
 RegisterNetEvent('qbx_properties:server:removeKeyholder', function(keyholderCid)
@@ -282,6 +323,13 @@ RegisterNetEvent('qbx_properties:server:removeKeyholder', function(keyholderCid)
     MySQL.Sync.execute('UPDATE properties SET keyholders = ? WHERE id = ?', {json.encode(keyholders), propertyId})
     local keyholder = exports.qbx_core:GetOfflinePlayer(keyholderCid)
     exports.qbx_core:Notify(playerSource, keyholder.PlayerData.charinfo.firstname.. locale('notify.removed_as_keyholder'))
+
+    logger.log({
+        source = playerSource,
+        event = 'qbx_properties:server:removeKeyholder',
+        message = locale('logs.removed_keyholder', keyholderCid, propertyId),
+        webhook = config.discordWebhook
+    })
 end)
 
 RegisterNetEvent('qbx_properties:server:logoutProperty', function()
@@ -337,11 +385,45 @@ AddEventHandler('playerDropped', function ()
     MySQL.update('UPDATE players SET position = ? WHERE citizenid = ?', { json.encode(vec4(coords.x, coords.y, coords.z, 0.0)), citizenid[playerSource] })
 end)
 
+local function canAccess(source, owner, keyholders)
+    local player = exports.qbx_core:GetPlayer(source)
+    if player.PlayerData.citizenid == owner then return true end
+    for i = 1, #keyholders do
+        if player.PlayerData.citizenid == keyholders[i] then return true end
+    end
+    return false
+end
+
+local function registerGarage(name, owner, keyholders, garage)
+    local garageName = 'property_' .. string.gsub(string.lower(name), ' ', '_')
+    exports.qbx_garages:RegisterGarage(garageName, {
+        label = name,
+        vehicleType = 'car',
+        accessPoints = {
+            {
+                coords = vec4(garage.x, garage.y, garage.z, garage.w),
+            }
+        },
+        canAccess = function(source)
+            return canAccess(source, owner, keyholders)
+        end
+    })
+end
+
+local function registerGarages()
+    local properties = MySQL.query.await('SELECT property_name, owner, keyholders, garage FROM properties WHERE owner IS NOT NULL AND garage IS NOT NULL')
+    if not properties then return end
+    for i = 1, #properties do
+        local property = properties[i]
+        registerGarage(property.property_name, property.owner, json.decode(property.keyholders), json.decode(property.garage))
+    end
+end
+
 local function startRentThread(propertyId)
     CreateThread(function()
         while true do
             local property = MySQL.single.await('SELECT owner, price, rent_interval, property_name FROM properties WHERE id = ?', {propertyId})
-            if not property or not property.owner  then break end
+            if not property or not property.owner then break end
 
             local player = exports.qbx_core:GetPlayerByCitizenId(property.owner) or exports.qbx_core:GetOfflinePlayer(property.owner)
             if not player then print(string.format('%s does not exist anymore, consider checking property id %s', property.owner, propertyId)) break end
@@ -368,7 +450,7 @@ RegisterNetEvent('qbx_properties:server:rentProperty', function(propertyId)
     local playerSource = source --[[@as number]]
     local player = exports.qbx_core:GetPlayer(playerSource)
     local playerCoords = GetEntityCoords(GetPlayerPed(playerSource))
-    local property = MySQL.single.await('SELECT owner, price, property_name, coords, rent_interval FROM properties WHERE id = ?', {propertyId})
+    local property = MySQL.single.await('SELECT owner, price, property_name, coords, rent_interval, keyholders, garage FROM properties WHERE id = ?', {propertyId})
     local propertyCoords = json.decode(property.coords)
     if #(playerCoords - vec3(propertyCoords.x, propertyCoords.y, propertyCoords.z)) > 8.0 then return end
     if property.owner then return end
@@ -379,16 +461,27 @@ RegisterNetEvent('qbx_properties:server:rentProperty', function(propertyId)
         return
     end
 
+    if property.garage then
+        registerGarage(property.property_name, player.PlayerData.citizenid, json.decode(property.keyholders), json.decode(property.garage))
+    end
+
     exports.qbx_core:Notify(playerSource, string.format('Successfully started renting %s', property.property_name), 'success')
     MySQL.update('UPDATE properties SET owner = ? WHERE id = ?', {player.PlayerData.citizenid, propertyId})
     startRentThread()
+
+    logger.log({
+        source = playerSource,
+        event = 'qbx_properties:server:rentProperty',
+        message = locale('logs.rent_property', player.PlayerData.citizenid, propertyId),
+        webhook = config.discordWebhook
+    })
 end)
 
 RegisterNetEvent('qbx_properties:server:buyProperty', function(propertyId)
     local playerSource = source --[[@as number]]
     local player = exports.qbx_core:GetPlayer(playerSource)
     local playerCoords = GetEntityCoords(GetPlayerPed(playerSource))
-    local property = MySQL.single.await('SELECT owner, price, property_name, coords FROM properties WHERE id = ?', {propertyId})
+    local property = MySQL.single.await('SELECT owner, price, property_name, coords, keyholders, garage FROM properties WHERE id = ?', {propertyId})
     local propertyCoords = json.decode(property.coords)
 
     if #(playerCoords - vec3(propertyCoords.x, propertyCoords.y, propertyCoords.z)) > 8.0 or property.owner then return end
@@ -398,20 +491,36 @@ RegisterNetEvent('qbx_properties:server:buyProperty', function(propertyId)
         return
     end
 
+    if property.garage then
+        registerGarage(property.property_name, player.PlayerData.citizenid, json.decode(property.keyholders), json.decode(property.garage))
+    end
+
     MySQL.update('UPDATE properties SET owner = ? WHERE id = ?', {player.PlayerData.citizenid, propertyId})
     exports.qbx_core:Notify(playerSource, string.format('Successfully purchased %s for $%s', property.property_name, property.price))
+
+    logger.log({
+        source = playerSource,
+        event = 'qbx_properties:server:buyProperty',
+        message = locale('logs.buy_property', player.PlayerData.citizenid, propertyId),
+        webhook = config.discordWebhook
+    })
 end)
 
-CreateThread(function()
+Citizen.CreateThreadNow(function()
     local sql1 = LoadResourceFile(cache.resource, 'property.sql')
     local sql2 = LoadResourceFile(cache.resource, 'decorations.sql')
+    local sql3 = LoadResourceFile(cache.resource, 'property_garages.sql')
+
     MySQL.query.await(sql1)
     MySQL.query.await(sql2)
+    MySQL.query.await(sql3)
 
     local properties = MySQL.query.await('SELECT id FROM properties WHERE owner IS NOT NULL AND rent_interval IS NOT NULL')
     for i = 1, #properties do
         startRentThread(properties[i].id)
     end
+
+    registerGarages()
 end)
 
 RegisterNetEvent('qbx_properties:server:stopRenting', function()
@@ -425,6 +534,13 @@ RegisterNetEvent('qbx_properties:server:stopRenting', function()
     for _ = 1, #insideProperty[propertyId] do
         exitProperty(insideProperty[propertyId][1])
     end
+
+    logger.log({
+        source = player.PlayerData.source,
+        event = 'qbx_properties:server:stopRenting',
+        message = locale('logs.stop_renting', player.PlayerData.citizenid, propertyId),
+        webhook = config.discordWebhook
+    })
 end)
 
 RegisterNetEvent('qbx_properties:server:addDecoration', function(hash, coords, rotation, objectId)
@@ -441,6 +557,13 @@ RegisterNetEvent('qbx_properties:server:addDecoration', function(hash, coords, r
         local id = MySQL.insert.await('INSERT INTO `properties_decorations` (property_id, model, coords, rotation) VALUES (?, ?, ?, ?)', {propertyId, hash, json.encode(coords), json.encode(rotation)})
         lib.triggerClientEvent('qbx_properties:client:addDecoration', insideProperty[propertyId], id, hash, coords, rotation)
     end
+
+    logger.log({
+        source = player.PlayerData.source,
+        event = 'qbx_properties:server:addDecoration',
+        message = locale('logs.add_decoration', player.PlayerData.citizenid, hash, propertyId),
+        webhook = config.discordWebhook
+    })
 end)
 
 RegisterNetEvent('qbx_properties:server:removeDecoration', function(objectId)
@@ -451,4 +574,11 @@ RegisterNetEvent('qbx_properties:server:removeDecoration', function(objectId)
 
     MySQL.query.await('DELETE FROM properties_decorations WHERE id = ?', {objectId})
     lib.triggerClientEvent('qbx_properties:client:removeDecoration', insideProperty[propertyId], objectId)
+
+    logger.log({
+        source = player.PlayerData.source,
+        event = 'qbx_properties:server:removeDecoration',
+        message = locale('logs.remove_decoration', player.PlayerData.citizenid, objectId, propertyId),
+        webhook = config.discordWebhook
+    })
 end)
